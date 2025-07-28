@@ -40,6 +40,11 @@ sudo usermod -aG docker $USER
    ```bash
    chmod +x docker_image_manager.sh
    ```
+3. 运行脚本：
+   ```bash
+   ./docker_image_manager.sh
+   ```
+   
 
 ## 📖 使用方法
 
