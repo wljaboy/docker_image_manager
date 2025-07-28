@@ -1,61 +1,10 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/bash
 
 # Docker 镜像管理器
 # 功能：备份和恢复 Docker 镜像，确保标签信息完整保留
 
 # 获取脚本所在目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# 检查并设置压缩工具命令
-setup_compress_commands() {
-    # gzip命令设置
-    if command -v gzip >/dev/null; then
-        GZIP_CMD="gzip"
-    else
-        GZIP_CMD="gzip_via_docker"
-    fi
-    
-    # zstd命令设置
-    if command -v zstd >/dev/null; then
-        # 检查版本兼容性
-        if zstd -V 2>&1 | grep -q "incorrect library version"; then
-            ZSTD_CMD="zstd_via_docker"
-        else
-            ZSTD_CMD="zstd"
-        fi
-    else
-        ZSTD_CMD="zstd_via_docker"
-    fi
-    
-    # xz命令设置
-    if command -v xz >/dev/null; then
-        XZ_CMD="xz"
-    else
-        XZ_CMD="xz_via_docker"
-    fi
-}
-
-# Docker容器方式运行gzip
-gzip_via_docker() {
-    docker run --rm -v "$(pwd)":/data alpine \
-        ash -c "apk add gzip >/dev/null && gzip $@"
-}
-
-# Docker容器方式运行zstd
-zstd_via_docker() {
-    docker run --rm -v "$(pwd)":/data alpine \
-        ash -c "apk add zstd >/dev/null && zstd $@"
-}
-
-# Docker容器方式运行xz
-xz_via_docker() {
-    docker run --rm -v "$(pwd)":/data alpine \
-        ash -c "apk add xz >/dev/null && xz $@"
-}
-
-# 初始化压缩命令
-setup_compress_commands
 
 # 显示菜单
 show_menu() {
@@ -91,7 +40,6 @@ show_file_progress() {
     local last_reported=0
     local report_interval=1000000  # 每1MB报告一次进度
     local start_time=$(date +%s)
-    local last_percent=0  # 初始化 last_percent
     
     # 获取文件名（不含路径）
     local file_name=$(basename "$file_path")
@@ -145,9 +93,9 @@ show_file_progress() {
         # 使用兼容的睡眠函数
         compatible_sleep 0.5
         
-        # 超时检查（如果文件存在但15秒内没有变化，退出）
+        # 超时检查（如果文件存在但10秒内没有变化，退出）
         local current_time=$(date +%s)
-        if [ $((current_time - start_time)) -gt 15 ]; then
+        if [ $((current_time - start_time)) -gt 10 ]; then
             break
         fi
     done
@@ -159,10 +107,10 @@ show_file_progress() {
 # 快速估算压缩率
 estimate_compression() {
     local tar_file=$1
-    local sample_size=20000000  # 20MB采样大小
+    local sample_size=10000000  # 10MB采样大小
     local original_size=$(du -b "$tar_file" | cut -f1)
     
-    # 如果文件小于20MB，则使用整个文件
+    # 如果文件小于10MB，则使用整个文件
     if [ $original_size -lt $sample_size ]; then
         sample_size=$original_size
     fi
@@ -177,49 +125,55 @@ estimate_compression() {
     local sample_name=$(basename "$sample_file")
     
     # 估算gzip压缩率
-    echo "  估算gzip压缩率..."
-    ($GZIP_CMD -c "$sample_file" > "${sample_file}.gz") &
-    gzip_pid=$!
-    
-    # 显示压缩进度
-    show_file_progress "${sample_file}.gz" $sample_size
-    wait $gzip_pid
-    
-    gzip_size=$(du -b "${sample_file}.gz" | cut -f1)
-    gzip_ratio=$(echo "scale=2; $gzip_size * $original_size / $sample_size" | bc)
-    gzip_ratio_percent=$(echo "scale=1; $gzip_ratio * 100 / $original_size" | bc)
-    echo -e "\r  gzip压缩: ${gzip_ratio_percent}% (约 $(echo "scale=1; $gzip_ratio/1048576" | bc)MB)"
-    rm -f "${sample_file}.gz"
+    if command -v gzip >/dev/null; then
+        echo "  估算gzip压缩率..."
+        (gzip -c "$sample_file" > "${sample_file}.gz") &
+        gzip_pid=$!
+        
+        # 显示压缩进度
+        show_file_progress "${sample_file}.gz" $sample_size
+        wait $gzip_pid
+        
+        gzip_size=$(du -b "${sample_file}.gz" | cut -f1)
+        gzip_ratio=$(echo "scale=2; $gzip_size * $original_size / $sample_size" | bc)
+        gzip_ratio_percent=$(echo "scale=1; $gzip_ratio * 100 / $original_size" | bc)
+        echo -e "\r  gzip压缩: ${gzip_ratio_percent}% (约 $(echo "scale=1; $gzip_ratio/1048576" | bc)MB)"
+        rm -f "${sample_file}.gz"
+    fi
     
     # 估算zstd压缩率
-    echo "  估算zstd压缩率..."
-    ($ZSTD_CMD -q -c "$sample_file" > "${sample_file}.zst") &
-    zstd_pid=$!
-    
-    # 显示压缩进度
-    show_file_progress "${sample_file}.zst" $sample_size
-    wait $zstd_pid
-    
-    zstd_size=$(du -b "${sample_file}.zst" | cut -f1)
-    zstd_ratio=$(echo "scale=2; $zstd_size * $original_size / $sample_size" | bc)
-    zstd_ratio_percent=$(echo "scale=1; $zstd_ratio * 100 / $original_size" | bc)
-    echo -e "\r  zstd压缩: ${zstd_ratio_percent}% (约 $(echo "scale=1; $zstd_ratio/1048576" | bc)MB)"
-    rm -f "${sample_file}.zst"
+    if command -v zstd >/dev/null; then
+        echo "  估算zstd压缩率..."
+        (zstd -q -c "$sample_file" > "${sample_file}.zst") &
+        zstd_pid=$!
+        
+        # 显示压缩进度
+        show_file_progress "${sample_file}.zst" $sample_size
+        wait $zstd_pid
+        
+        zstd_size=$(du -b "${sample_file}.zst" | cut -f1)
+        zstd_ratio=$(echo "scale=2; $zstd_size * $original_size / $sample_size" | bc)
+        zstd_ratio_percent=$(echo "scale=1; $zstd_ratio * 100 / $original_size" | bc)
+        echo -e "\r  zstd压缩: ${zstd_ratio_percent}% (约 $(echo "scale=1; $zstd_ratio/1048576" | bc)MB)"
+        rm -f "${sample_file}.zst"
+    fi
     
     # 估算xz压缩率
-    echo "  估算xz压缩率..."
-    ($XZ_CMD -c "$sample_file" > "${sample_file}.xz") &
-    xz_pid=$!
-    
-    # 显示压缩进度
-    show_file_progress "${sample_file}.xz" $sample_size
-    wait $xz_pid
-    
-    xz_size=$(du -b "${sample_file}.xz" | cut -f1)
-    xz_ratio=$(echo "scale=2; $xz_size * $original_size / $sample_size" | bc)
-    xz_ratio_percent=$(echo "scale=1; $xz_ratio * 100 / $original_size" | bc)
-    echo -e "\r  xz压缩: ${xz_ratio_percent}% (约 $(echo "scale=1; $xz_ratio/1048576" | bc)MB)"
-    rm -f "${sample_file}.xz"
+    if command -v xz >/dev/null; then
+        echo "  估算xz压缩率..."
+        (xz -c "$sample_file" > "${sample_file}.xz") &
+        xz_pid=$!
+        
+        # 显示压缩进度
+        show_file_progress "${sample_file}.xz" $sample_size
+        wait $xz_pid
+        
+        xz_size=$(du -b "${sample_file}.xz" | cut -f1)
+        xz_ratio=$(echo "scale=2; $xz_size * $original_size / $sample_size" | bc)
+        xz_ratio_percent=$(echo "scale=1; $xz_ratio * 100 / $original_size" | bc)
+        echo -e "\r  xz压缩: ${xz_ratio_percent}% (约 $(echo "scale=1; $xz_ratio/1048576" | bc)MB)"
+        rm -f "${sample_file}.xz"
+    fi
     
     # 清理采样文件
     rm -f "$sample_file"
@@ -246,65 +200,65 @@ compress_backup() {
             echo "备份文件保持未压缩状态: ${tar_file##*/}"
             ;;
         2)
-            final_file="${tar_file}.gz"
-            echo "使用 gzip 压缩: ${tar_file##*/} -> ${final_file##*/}"
-            
-            # 显示压缩进度
-            ($GZIP_CMD -c "$tar_file" > "$final_file") &
-            gzip_pid=$!
-            
-            show_file_progress "$final_file" $(stat -c %s "$tar_file")
-            wait $gzip_pid
-            
-            # 检查压缩是否成功
-            if [ ! -f "$final_file" ] || [ ! -s "$final_file" ]; then
-                echo -e "\r压缩失败! 使用未压缩格式"
+            if ! command -v gzip >/dev/null; then
+                echo "警告: gzip 不可用，使用未压缩格式"
                 final_file="$tar_file"
             else
+                final_file="${tar_file}.gz"
+                echo "使用 gzip 压缩: ${tar_file##*/} -> ${final_file##*/}"
+                
+                # 显示压缩进度
+                (gzip -c "$tar_file" > "$final_file") &
+                gzip_pid=$!
+                
+                show_file_progress "$final_file" $(stat -c %s "$tar_file")
+                wait $gzip_pid
+                
                 # 删除原始tar文件
                 rm -f "$tar_file"
+                
                 echo -e "\r压缩完成: ${final_file##*/}"
             fi
             ;;
         3)
-            final_file="${tar_file}.zst"
-            echo "使用 zstd 压缩: ${tar_file##*/} -> ${final_file##*/}"
-            
-            # 显示压缩进度
-            ($ZSTD_CMD -q -c "$tar_file" > "$final_file") &
-            zstd_pid=$!
-            
-            show_file_progress "$final_file" $(stat -c %s "$tar_file")
-            wait $zstd_pid
-            
-            # 检查压缩是否成功
-            if [ ! -f "$final_file" ] || [ ! -s "$final_file" ]; then
-                echo -e "\r压缩失败! 使用未压缩格式"
+            if ! command -v zstd >/dev/null; then
+                echo "警告: zstd 不可用，使用未压缩格式"
                 final_file="$tar_file"
             else
+                final_file="${tar_file}.zst"
+                echo "使用 zstd 压缩: ${tar_file##*/} -> ${final_file##*/}"
+                
+                # 显示压缩进度
+                (zstd -q -T0 -c "$tar_file" > "$final_file") &
+                zstd_pid=$!
+                
+                show_file_progress "$final_file" $(stat -c %s "$tar_file")
+                wait $zstd_pid
+                
                 # 删除原始tar文件
                 rm -f "$tar_file"
+                
                 echo -e "\r压缩完成: ${final_file##*/}"
             fi
             ;;
         4)
-            final_file="${tar_file}.xz"
-            echo "使用 xz 压缩: ${tar_file##*/} -> ${final_file##*/}"
-            
-            # 显示压缩进度
-            ($XZ_CMD -9e -c "$tar_file" > "$final_file") &
-            xz_pid=$!
-            
-            show_file_progress "$final_file" $(stat -c %s "$tar_file")
-            wait $xz_pid
-            
-            # 检查压缩是否成功
-            if [ ! -f "$final_file" ] || [ ! -s "$final_file" ]; then
-                echo -e "\r压缩失败! 使用未压缩格式"
+            if ! command -v xz >/dev/null; then
+                echo "警告: xz 不可用，使用未压缩格式"
                 final_file="$tar_file"
             else
+                final_file="${tar_file}.xz"
+                echo "使用 xz 压缩: ${tar_file##*/} -> ${final_file##*/}"
+                
+                # 显示压缩进度
+                (xz -9e -T0 -c "$tar_file" > "$final_file") &
+                xz_pid=$!
+                
+                show_file_progress "$final_file" $(stat -c %s "$tar_file")
+                wait $xz_pid
+                
                 # 删除原始tar文件
                 rm -f "$tar_file"
+                
                 echo -e "\r压缩完成: ${final_file##*/}"
             fi
             ;;
@@ -325,13 +279,6 @@ backup_images() {
     local TMP_DIR="$SCRIPT_DIR/docker_backup_tmp"
     
     echo -e "\n开始备份 Docker 镜像..."
-    
-    # 检查Docker是否可用
-    if ! command -v docker &> /dev/null && [ "$GZIP_CMD" == "gzip_via_docker" -o "$ZSTD_CMD" == "zstd_via_docker" -o "$XZ_CMD" == "xz_via_docker" ]; then
-        echo -e "\n错误: 需要Docker来执行压缩操作，但Docker未安装或未运行!"
-        echo "请安装Docker或确保Docker服务正在运行"
-        return 1
-    fi
     
     # 创建临时目录
     mkdir -p "$TMP_DIR"
@@ -400,55 +347,42 @@ extract_backup() {
             echo "解压 gzip 压缩文件: $file_name"
             
             # 显示解压进度
-            ($GZIP_CMD -dc "$backup_file" | tar x -C "$TMP_DIR") &
+            (gzip -dc "$backup_file" | tar x -C "$TMP_DIR") &
             extract_pid=$!
             
             show_file_progress "$backup_file" $(stat -c %s "$backup_file")
             wait $extract_pid
             
-            # 检查解压是否成功
-            if [ $? -ne 0 ]; then
-                echo -e "\r解压失败! 请检查文件完整性"
-                return 1
-            else
-                echo -e "\r解压完成: $file_name"
-            fi
+            echo -e "\r解压完成: $file_name"
             ;;
         *.tar.zst)
             echo "解压 zstd 压缩文件: $file_name"
             
-            # 显示解压进度
-            ($ZSTD_CMD -dc "$backup_file" | tar x -C "$TMP_DIR") &
-            extract_pid=$!
-            
-            show_file_progress "$backup_file" $(stat -c %s "$backup_file")
-            wait $extract_pid
-            
-            # 检查解压是否成功
-            if [ $? -ne 0 ]; then
-                echo -e "\r解压失败! 请检查文件完整性"
-                return 1
-            else
+            if command -v zstd >/dev/null; then
+                # 显示解压进度
+                (zstd -dc "$backup_file" | tar x -C "$TMP_DIR") &
+                extract_pid=$!
+                
+                show_file_progress "$backup_file" $(stat -c %s "$backup_file")
+                wait $extract_pid
+                
                 echo -e "\r解压完成: $file_name"
+            else
+                echo "错误: 系统未安装 zstd，无法解压"
+                return 1
             fi
             ;;
         *.tar.xz)
             echo "解压 xz 压缩文件: $file_name"
             
             # 显示解压进度
-            ($XZ_CMD -dc "$backup_file" | tar x -C "$TMP_DIR") &
+            (xz -dc "$backup_file" | tar x -C "$TMP_DIR") &
             extract_pid=$!
             
             show_file_progress "$backup_file" $(stat -c %s "$backup_file")
             wait $extract_pid
             
-            # 检查解压是否成功
-            if [ $? -ne 0 ]; then
-                echo -e "\r解压失败! 请检查文件完整性"
-                return 1
-            else
-                echo -e "\r解压完成: $file_name"
-            fi
+            echo -e "\r解压完成: $file_name"
             ;;
         *)
             echo "未知文件格式，尝试直接解包: $file_name"
@@ -479,13 +413,6 @@ restore_images() {
     if [ ${#backup_files[@]} -eq 0 ]; then
         echo -e "\n错误: 在脚本目录找不到备份文件!"
         echo "请将备份文件放在脚本目录: $SCRIPT_DIR"
-        return 1
-    fi
-    
-    # 检查Docker是否可用
-    if ! command -v docker &> /dev/null && [ "$GZIP_CMD" == "gzip_via_docker" -o "$ZSTD_CMD" == "zstd_via_docker" -o "$XZ_CMD" == "xz_via_docker" ]; then
-        echo -e "\n错误: 需要Docker来执行解压操作，但Docker未安装或未运行!"
-        echo "请安装Docker或确保Docker服务正在运行"
         return 1
     fi
     
