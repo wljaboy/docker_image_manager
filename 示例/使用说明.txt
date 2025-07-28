@@ -1,0 +1,19 @@
+脚本使用的压缩方式:
+  1. 不压缩 (保留为 .tar 文件)
+  2. gzip 压缩 (快速, 中等压缩率)
+  3. zstd 压缩 (推荐, 高速高压缩率)
+  4. xz 压缩 (最高压缩率, 但速度慢)
+
+docker_image_manager.sh脚本使用上面几种压缩方式，请自行安装想要使用的一种或多种压缩软件（gzip，zstd，xz）
+
+脚本docker_image_managerD.sh可以不安装压缩软件
+
+下载脚本后赋予执行权限
+chmod +x docker_image_manager.sh
+或
+chmod +x docker_image_managerD.sh
+
+运行脚本
+./docker_image_manager.sh
+或
+./docker_image_managerD.sh
